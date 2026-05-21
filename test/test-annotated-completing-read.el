@@ -747,7 +747,7 @@ the invariant being tested is that key+padding is constant, not key+padding+valu
 
 (ert-deftest annotated-completing-read/directory-no-groups-below-threshold ()
   "No :group-name is passed when there are 8 or fewer candidates."
-  (let* ((dirs (--map (format "/tmp/dir%d/" it) (number-sequence 1 8)))
+  (let* ((dirs (mapcar (lambda (n) (format "/tmp/dir%d/" n)) (number-sequence 1 8)))
          (default-directory "/tmp/dir1/")
          received-group-name)
     (cl-letf (((symbol-function 'annotated-completing-read--project-root) (lambda () "/tmp/dir1/"))
@@ -760,7 +760,7 @@ the invariant being tested is that key+padding is constant, not key+padding+valu
 
 (ert-deftest annotated-completing-read/directory-groups-above-threshold ()
   ":group-name is a function when there are more than 8 candidates."
-  (let* ((dirs (--map (format "/tmp/dir%d/" it) (number-sequence 1 9)))
+  (let* ((dirs (mapcar (lambda (n) (format "/tmp/dir%d/" n)) (number-sequence 1 9)))
          (default-directory "/tmp/dir1/")
          received-group-name)
     (cl-letf (((symbol-function 'annotated-completing-read--project-root) (lambda () "/tmp/dir1/"))
@@ -799,7 +799,7 @@ the invariant being tested is that key+padding is constant, not key+padding+valu
 
 (ert-deftest annotated-completing-read/directory-grouped-annotation-is-counts ()
   "When grouped, the table passed to annotated-completing-read contains entry counts."
-  (let* ((dirs (--map (format "/tmp/dir%d/" it) (number-sequence 1 9)))
+  (let* ((dirs (mapcar (lambda (n) (format "/tmp/dir%d/" n)) (number-sequence 1 9)))
          (default-directory "/tmp/dir1/")
          received-table)
     (cl-letf (((symbol-function 'annotated-completing-read--project-root) (lambda () "/tmp/dir1/"))
@@ -828,6 +828,177 @@ the invariant being tested is that key+padding is constant, not key+padding+valu
       (annotated-completing-read-directory :candidates dirs)
       (should (equal "project root"      (map-elt received-table root)))
       (should (equal "current directory" (map-elt received-table current))))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; annotated-completing-read--filter-directories
+
+(ert-deftest annotated-completing-read/filter-directories-removes-non-strings ()
+  "Non-string entries (nil, numbers) are dropped."
+  (let ((result (annotated-completing-read--filter-directories (list "/tmp/" nil 42 "/tmp/"))))
+    (should (cl-every #'stringp result))))
+
+(ert-deftest annotated-completing-read/filter-directories-regular-file-becomes-directory ()
+  "A regular file path is replaced by its parent directory."
+  (let* ((f (make-temp-file "acr-test"))
+         (expected (file-name-as-directory (file-name-directory f)))
+         (result (annotated-completing-read--filter-directories (list f))))
+    (unwind-protect
+        (should (member expected result))
+      (delete-file f))))
+
+(ert-deftest annotated-completing-read/filter-directories-nonexistent-excluded ()
+  "Paths that are not existing directories are excluded."
+  (let ((result (annotated-completing-read--filter-directories
+                 (list "/tmp/this-does-not-exist-acr-test/"))))
+    (should (null result))))
+
+(ert-deftest annotated-completing-read/filter-directories-deduplicates ()
+  "Duplicate directory paths are collapsed to one entry."
+  (let ((result (annotated-completing-read--filter-directories (list "/tmp/" "/tmp/" "/tmp/"))))
+    (should (= 1 (length result)))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; annotated-completing-read--directory-entry-counts
+
+(ert-deftest annotated-completing-read/directory-entry-counts-format ()
+  "Returns 'N dirs, M files' for an accessible directory."
+  (acr-directory-test--with-temp-tree root ("sub1" "sub2")
+    (write-region "" nil (expand-file-name "file.txt" root))
+    (let ((result (annotated-completing-read--directory-entry-counts root)))
+      (should (string-match-p "[0-9]+ dirs" result))
+      (should (string-match-p "[0-9]+ files" result)))))
+
+(ert-deftest annotated-completing-read/directory-entry-counts-inaccessible ()
+  "Returns \"\" for a path that is not an accessible directory."
+  (should (equal "" (annotated-completing-read--directory-entry-counts "/no/such/path/"))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; annotated-completing-read--ensure-history
+
+(ert-deftest annotated-completing-read/ensure-history-noop-when-valid ()
+  "Does nothing when history is already a hash table."
+  (let ((annotated-completing-read-history (make-hash-table :test #'equal)))
+    (map-put! annotated-completing-read-history 'cmd '("a"))
+    (annotated-completing-read--ensure-history)
+    (should (equal '("a") (map-elt annotated-completing-read-history 'cmd)))))
+
+(ert-deftest annotated-completing-read/ensure-history-resets-corrupt-value ()
+  "Resets history to a fresh hash table when the stored value is not a hash table."
+  (let ((annotated-completing-read-history "corrupt"))
+    (annotated-completing-read--ensure-history)
+    (should (hash-table-p annotated-completing-read-history))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; annotated-completing-read-context-from-point — initial-input
+
+(ert-deftest annotated-completing-read/context-from-point-initial-input-forwarded ()
+  "The :initial-input argument is forwarded to annotated-completing-read."
+  (let ((kill-ring (list "item"))
+        received-initial)
+    (with-temp-buffer
+      (cl-letf (((symbol-function 'annotated-completing-read)
+                 (lambda (_tbl &rest args)
+                   (setq received-initial (plist-get args :initial-input))
+                   "item")))
+        (annotated-completing-read-context-from-point :initial-input "pre")
+        (should (equal "pre" received-initial))))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; annotated-completing-read-directory — additional relationship labels
+
+(ert-deftest annotated-completing-read/directory-labels-child ()
+  "A subdirectory of the current dir is labelled 'child'."
+  (let* ((current (expand-file-name "/tmp/"))
+         (child   (expand-file-name "/tmp/sub/"))
+         (default-directory current))
+    (cl-letf (((symbol-function 'annotated-completing-read--project-root) (lambda () current))
+              ((symbol-function 'annotated-completing-read)
+               (lambda (tbl &rest _)
+                 (should (equal "child" (map-elt tbl child)))
+                 current)))
+      (annotated-completing-read-directory :candidates (list child)))))
+
+(ert-deftest annotated-completing-read/directory-labels-sibling ()
+  "A directory sharing the parent of current dir is labelled 'sibling'."
+  (let* ((current (expand-file-name "/tmp/a/"))
+         (sibling (expand-file-name "/tmp/b/"))
+         (default-directory current))
+    (cl-letf (((symbol-function 'annotated-completing-read--project-root) (lambda () current))
+              ((symbol-function 'annotated-completing-read)
+               (lambda (tbl &rest _)
+                 (should (equal "sibling" (map-elt tbl sibling)))
+                 current)))
+      (annotated-completing-read-directory :candidates (list sibling)))))
+
+(ert-deftest annotated-completing-read/directory-require-match-forwarded ()
+  "The :require-match keyword is forwarded to annotated-completing-read."
+  (let* ((dir (expand-file-name "/tmp/"))
+         (default-directory dir)
+         received-require-match)
+    (cl-letf (((symbol-function 'annotated-completing-read--project-root) (lambda () dir))
+              ((symbol-function 'annotated-completing-read)
+               (lambda (_tbl &rest args)
+                 (setq received-require-match (plist-get args :require-match))
+                 dir)))
+      (annotated-completing-read-directory :candidates (list dir) :require-match t)
+      (should (eq t received-require-match)))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; annotated-completing-read — empty table
+
+(ert-deftest annotated-completing-read/empty-table ()
+  "Accepts an empty hash table and returns whatever completing-read returns."
+  (let ((table (make-hash-table :test #'equal)))
+    (cl-letf (((symbol-function 'completing-read)
+               (lambda (_prompt _coll &rest _) "")))
+      (should (equal "" (annotated-completing-read table))))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; annotated-completing-read--directory-entry-counts — empty directory
+
+(ert-deftest annotated-completing-read/directory-entry-counts-empty-dir ()
+  "Returns '0 dirs, 0 files' for an empty accessible directory."
+  (acr-directory-test--with-temp-tree root ()
+    (let ((result (annotated-completing-read--directory-entry-counts root)))
+      (should (string-match-p "0 dirs" result))
+      (should (string-match-p "0 files" result)))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; annotated-completing-read--directory-parents — start equals stop
+
+(ert-deftest annotated-completing-read/directory-parents-start-equals-stop ()
+  "When start and stop are the same path the while loop does not execute."
+  (acr-directory-test--with-temp-tree root ()
+    (let ((result (annotated-completing-read--directory-parents root root)))
+      (should (= 1 (length result)))
+      (should (cl-some (lambda (d) (file-equal-p d root)) result)))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; annotated-completing-read-enable-session-save
+
+(ert-deftest annotated-completing-read/enable-session-save-savehist ()
+  "Adds history variable to savehist-additional-variables when savehist is loaded."
+  (require 'savehist)
+  (let ((orig savehist-additional-variables))
+    (unwind-protect
+        (progn
+          (setq savehist-additional-variables
+                (remove 'annotated-completing-read-history savehist-additional-variables))
+          (annotated-completing-read-enable-session-save)
+          (should (member 'annotated-completing-read-history savehist-additional-variables)))
+      (setq savehist-additional-variables orig))))
+
+(ert-deftest annotated-completing-read/enable-session-save-desktop ()
+  "Adds history variable to desktop-globals-to-save when desktop is loaded."
+  (require 'desktop)
+  (let ((orig desktop-globals-to-save))
+    (unwind-protect
+        (progn
+          (setq desktop-globals-to-save
+                (remove 'annotated-completing-read-history desktop-globals-to-save))
+          (annotated-completing-read-enable-session-save)
+          (should (member 'annotated-completing-read-history desktop-globals-to-save)))
+      (setq desktop-globals-to-save orig))))
 
 (provide 'test-annotated-completing-read)
 ;;; test-annotated-completing-read.el ends here

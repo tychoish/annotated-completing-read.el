@@ -3,7 +3,7 @@
 ;; Author: sam kleinman
 ;; Maintainer: tychoish
 ;; Version: 0.1
-;; Package-Requires: ((emacs "29.1") (dash "2.19"))
+;; Package-Requires: ((emacs "29.1"))
 ;; Keywords: convenience, matching
 ;; URL: https://github.com/tychoish/dot-emacs
 
@@ -25,12 +25,12 @@
 ;;; Commentary:
 
 ;; Provides `annotated-completing-read', a wrapper around
-;; `completing-read' that accepts a hash table of candidates to
+;; `completing-read', that accepts a hash table of candidates to
 ;; annotations and surfaces them as aligned completion metadata
 ;; understood by vertico, marginalia, and embark.
 ;;
 ;; Also provides `annotated-completing-read-context-from-point', a
-;; context-aware selection interface that populates candidates from
+;; context-aware selection interface, that populates candidates from
 ;; thing-at-point, the active region, the current line, and the kill
 ;; ring.
 
@@ -39,8 +39,8 @@
 ;; stdlib packages
 (require 'cl-lib)
 
-;; external (melpa) packages
-(require 'dash)
+(require 'map)
+(require 'seq)
 
 (defvar annotated-completing-read-history (make-hash-table :test #'equal)
   "Hash table mapping command symbols to per-command minibuffer history lists.
@@ -141,50 +141,44 @@ Signals `user-error' if TABLE is not a hash table."
 (defun annotated-completing-read--context-candidates (&optional seed)
   "Build an annotated hash table of candidates from the current context.
 SEED is a string or list of strings to include as explicit candidates."
-  (let ((table (make-hash-table :test #'equal))
-        (idx 0))
-
-    (let ((seeds (->> (cond ((listp seed) seed)
-                            ((stringp seed) (list seed)))
-                      (-non-nil)
-                      (-map #'string-trim)
-                      (-remove #'string-empty-p)
-                      (-filter (lambda (s) (< (length s) 128))))))
-      (-each seeds (lambda (s) (map-put! table s "seed"))))
-
-    (let ((pairs (->> (-concat (--map (cons 'text-mode it) '(word email url sentence))
-                               (--map (cons 'prog-mode it) '(symbol word sexp defun)))
-                      (--keep (when-let* ((_ (derived-mode-p (car it)))
-                                          (val (thing-at-point (cdr it)))
-                                          (_ val)
-                                          (val (string-trim val))
-                                          (_ (not (string-empty-p val)))
-                                          (val (substring-no-properties val))
-                                          (_ (< (length val) 64)))
-                                (cons val (format "%s at point" (cdr it))))))))
-      (-each pairs (lambda (pair) (map-put! table (car pair) (cdr pair)))))
-
-    (when (use-region-p)
-      (let* ((sel (buffer-substring-no-properties (region-beginning) (region-end)))
-             (sel (string-trim sel)))
-        (when (and (not (string-empty-p sel)) (< (length sel) 128))
-          (map-put! table sel (format "region · %s" (buffer-name))))))
-
-    (let ((line (thing-at-point 'line)))
-      (when line
-        (let ((line (string-trim (substring-no-properties line))))
-          (when (and (not (string-empty-p line)) (< (length line) 128))
-            (map-put! table line (format "line · %s" (buffer-name)))))))
-
-    (let ((ring-items (->> kill-ring
-                           (-map #'substring-no-properties)
-                           (-non-nil)
-                           (-map #'string-trim)
-                           (-remove #'string-empty-p)
-                           (-filter (lambda (s) (< (length s) 128)))
-                           (-take 10))))
-      (-each ring-items (lambda (s) (map-put! table s (format "kill-ring [%d]" (cl-incf idx))))))
-
+  (let ((table (make-hash-table :test #'equal)))
+    (thread-last (append
+		  ;; current line
+		  (when-let* ((line (thing-at-point 'line)))
+		    (list (cons line (format "line · %s" (buffer-name)))))
+		  ;; seeds
+		  (thread-last
+		    (cond
+		     ((listp seed) seed)
+		     ((stringp seed) (list seed)))
+		    (seq-remove #'null)
+		    (mapcar (lambda (s) (cons s "seed"))))
+		  ;; thing-at-point
+		  (thread-last
+		    (cond
+		     ((derived-mode-p 'prog-mode) '(symbol word sexp defun))
+		     ((derived-mode-p 'text-mode) '(word email url sentence)))
+		    (mapcar (lambda (tap) (cons tap (thing-at-point tap))))
+		    (seq-remove (lambda (pair) (or (null (cdr pair)) (>= (length (cdr pair)) 64))))
+		    (mapcar (lambda (tapv) (cons (cdr tapv) (format "%s at point" (car tapv))))))
+		  ;; active region
+		  (when (use-region-p)
+		    (list (cons (buffer-substring-no-properties (region-beginning) (region-end))
+				(format "region · %s" (buffer-name)))))
+		  ;; kill ring — first 10 entries with 1-based index annotations
+		  (seq-take
+		   (thread-last
+		     kill-ring
+		     (seq-remove #'null)
+		     (seq-map-indexed (lambda (s i) (cons s (format "kill-ring [%d]" (1+ i))))))
+		   10))
+		 ;; normalize: each step is its own stage
+		 (seq-map (lambda (p) (cons (substring-no-properties (car p)) (cdr p))))
+		 (seq-map (lambda (p) (cons (string-trim (car p)) (cdr p))))
+		 (seq-remove (lambda (p) (string-empty-p (car p))))
+		 (seq-filter (lambda (p) (< (length (car p)) 128)))
+		 ;; insert into table
+		 (mapc (lambda (pair) (map-put! table (car pair) (cdr pair)))))
     table))
 
 ;;;###autoload
@@ -224,46 +218,43 @@ command its own isolated history."
   (or (project-buffers (project-current))
       (when (featurep 'projectile) (projectile-project-buffers))
       (let ((dir (annotated-completing-read--project-root)))
-	(--filter (with-current-buffer it
- 		    (file-in-directory-p (buffer-file-name it) dir))
-		  (buffer-list)))))
+	(seq-filter (lambda (it)
+		      (with-current-buffer it
+			(file-in-directory-p (buffer-file-name it) dir)))
+		    (buffer-list)))))
 
 (defun annotated-completing-read--filter-directories (sequence)
   "Return SEQUENCE filtered to existing directories, canonicalized and deduplicated."
-  (->> sequence
-       (-filter #'stringp)
-       (-map #'string-trim)
-       (-remove #'string-empty-p)
-       (--map (or (when (file-regular-p it)
-		    (file-name-directory it))
-		  it))
-       (-map #'expand-file-name)
-       (-distinct)
-       (-filter #'file-directory-p)))
+  (thread-last sequence
+       (seq-filter #'stringp)
+       (seq-map #'string-trim)
+       (seq-remove #'string-empty-p)
+       (seq-map (lambda (it)
+		  (or (when (file-regular-p it)
+			(file-name-directory it))
+		      it)))
+       (seq-map #'expand-file-name)
+       (seq-uniq)
+       (seq-filter #'file-directory-p)))
 
 (defun annotated-completing-read--directory-clean (dirs)
-  "Normalise DIRS: expand relative paths, drop nil/blank, deduplicate."
-  (->> dirs
-       (-non-nil)
-       (-map #'string-trim)
-       (-remove #'string-empty-p)
-       (-map #'expand-file-name)
-       (-map #'directory-file-name)
-       (-map #'file-truename)
-       (-distinct)
-       (-map #'file-name-as-directory)))
+  "Normalize DIRS: expand relative paths, drop nil/blank, and de-duplicate."
+  (thread-last dirs
+       (seq-remove #'null)
+       (seq-map #'string-trim)
+       (seq-remove #'string-empty-p)
+       (seq-map #'expand-file-name)
+       (seq-map #'directory-file-name)
+       (seq-map #'file-truename)
+       (seq-uniq)
+       (seq-map #'file-name-as-directory)))
 
 (defun annotated-completing-read--directory-parents (&optional start stop)
   "Return intermediate directory paths walking up from START to STOP."
-  (let* ((start (or start default-directory))
-         (stop (or stop "~/"))
-         (stop-path (expand-file-name (string-trim stop)))
-         (current (expand-file-name (string-trim start)))
+  (let* ((stop-path (expand-file-name (string-trim (or stop "~/"))))
+         (current (expand-file-name (string-trim (or start default-directory))))
          (output (list stop-path current)))
-    (while (and
-            current
-            (or (not (string= current stop-path))
-                (not (string-prefix-p stop-path current))))
+    (while (and current (not (string= current stop-path)))
       (setq current (file-name-parent-directory current))
       (push current output))
     (annotated-completing-read--filter-directories output)))
@@ -271,38 +262,41 @@ command its own isolated history."
 (defun annotated-completing-read--directory-default-candidates ()
   "Assemble context-aware directory candidates from project, buffers, and point."
   (let* ((proj-root (annotated-completing-read--project-root))
-         (home (expand-file-name "~/")))
+	 (home (expand-file-name "~/"))
+	 (candidates
+	  (append
+	   ;; includes all paths between the current directory and the
+	   ;; project root (inclusive)
+	   (annotated-completing-read--directory-parents default-directory proj-root)
+	   ;; includes the directory of every path that has an open buffer.
+	   (thread-last
+	     (annotated-completing-read--project-buffers)
+	     (seq-map #'buffer-file-name)
+	     (seq-remove #'null)
+	     ;; NOTE: if we have a buffer that's file name is the
+	     ;; project root itself then this puts the parent of the
+	     ;; project root (which the previous item should include)
+	     ;; we run distinct at the end too, so it's fine
+	     (seq-keep #'file-name-directory)
+	     (seq-uniq))
+	   ;; a collection of things that __might__ be something the
+	   ;; user is trying for guess
+	   (list
+	    (thing-at-point 'filename)
+	    (thing-at-point 'existing-filename)
+	    default-directory
+	    proj-root
+	    home))))
 
-    (--> (append
-	  ;; includes all paths between the current directory and the
-	  ;; project root (inclusive)
-          (annotated-completing-read--directory-parents default-directory proj-root)
-	  ;; includes the directory of every path that has an open buffer.
-	  (->> (annotated-completing-read--project-buffers)
-	       (-map #'buffer-file-name)
-	       (-non-nil)
-	       ;; NOTE: if we have a buffer that's file name is the
-	       ;; project root itself then this puts the parent of the
-	       ;; project root (which the previous item should include)
-	       ;; we run distinct at the end too, so it's fine
-	       (-keep #'file-name-directory)
-	       (-distinct))
-	  ;; a collection of things that __might__ be something the
-	  ;; user is trying for guess
-          (list (thing-at-point 'filename)
-                (thing-at-point 'existing-filename)
-                default-directory
-		proj-root
-                home))
-	 ;; if the list is relatively short, add all of the top level
-	 ;; directories in the project root
-         (if (or (and (length< it 16) (not (string-equal home proj-root)))
-                 current-prefix-arg)
-             (nconc (-select #'file-directory-p (directory-files proj-root t "[^\\.]")) it)
-           it)
-	 ;; do one big filter pass to make sure we only give
-	 ;; directories, and things get expanded correctly:
-         (annotated-completing-read--filter-directories it))))
+    (annotated-completing-read--filter-directories
+     ;; if the list is relatively short, add all of the top level
+     ;; directories in the project root
+     ;; do one big filter pass to make sure we only give
+     ;; directories, and things get expanded correctly:
+     (if (or (and (length< candidates 16) (not (string-equal home proj-root)))
+             current-prefix-arg)
+         (nconc (seq-filter #'file-directory-p (directory-files proj-root t "[^\\.]")) candidates)
+       candidates))))
 
 (defun annotated-completing-read--directory-entry-counts (dir)
   "Return a brief annotation with subdirectory and file counts for DIR."
@@ -329,7 +323,7 @@ annotation shows entry counts instead."
                    (annotated-completing-read--directory-default-candidates)))
 	 (project-root (annotated-completing-read--project-root))
          (relationship (make-hash-table :test #'equal)))
-    (--each (mapcar #'file-truename dirs)
+    (dolist (it (mapcar #'file-truename dirs))
       (map-put! relationship it
               (cond
 	       ((and (equal it project-root) (equal it default-directory)) "current directory (project root)")
@@ -337,11 +331,12 @@ annotation shows entry counts instead."
 	       ((equal it default-directory) "current directory")
 	       ((string-prefix-p it default-directory) "parent")
                ((string-prefix-p default-directory it) "child")
-               ((equal (file-name-directory it) (file-name-directory default-directory)) "sibling")
-               (:else ""))))
+               ((equal (file-name-directory (directory-file-name it))
+                       (file-name-directory (directory-file-name default-directory))) "sibling")
+               (t ""))))
     (if (> (map-length relationship) 8)
         (let ((counts (make-hash-table :test #'equal)))
-          (--each dirs (map-put! counts it (annotated-completing-read--directory-entry-counts it)))
+          (dolist (it dirs) (map-put! counts it (annotated-completing-read--directory-entry-counts it)))
           (annotated-completing-read counts
            :prompt (or prompt "directory: ")
            :require-match require-match
