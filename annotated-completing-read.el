@@ -409,16 +409,13 @@ annotation shows entry counts instead."
 
 ;;;###autoload
 (defun annotated-completing-read-enable-session-save ()
-  "Persist ACR history across sessions via savehist and desktop.
-Call this once after enabling `savehist-mode' or `desktop-save-mode'.
+  "Persist ACR history across sessions via savehist and desktop and add to savehist's hook.
+Call this once after enabling `savehist-mode' and/or `desktop-save-mode'.
 `annotated-completing-read-history' is a hash table; both mechanisms
 can serialize it in Emacs 28+."
-  (with-eval-after-load 'savehist
-    (add-to-list 'savehist-additional-variables 'annotated-completing-read-history))
-  (with-eval-after-load 'desktop
-    (add-to-list 'desktop-globals-to-save 'annotated-completing-read-history)))
-
-(add-hook 'savehist-mode-hook #'annotated-completing-read--ensure-history)
+  (add-to-list 'savehist-additional-variables 'annotated-completing-read-history)
+  (add-to-list 'desktop-globals-to-save 'annotated-completing-read-history)
+  (add-hook 'savehist-mode-hook #'annotated-completing-read--ensure-history))
 
 (provide 'annotated-completing-read)
 ;;; annotated-completing-read.el ends here
