@@ -413,7 +413,8 @@ Call this once after enabling `savehist-mode' and/or `desktop-save-mode'.
 can serialize it in Emacs 28+."
   (when (boundp 'savehist-additional-variables)
     (add-to-list 'savehist-additional-variables 'annotated-completing-read-history))
-  (add-to-list 'desktop-globals-to-save 'annotated-completing-read-history)
+  (when (boundp 'desktop-globals-to-save)
+    (add-to-list 'desktop-globals-to-save 'annotated-completing-read-history))
   (add-hook 'savehist-mode-hook #'annotated-completing-read--ensure-history))
 
 (provide 'annotated-completing-read)
