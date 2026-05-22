@@ -415,7 +415,8 @@ Registers `annotated-completing-read''s history with savehist mode's hook.
 Call this once after enabling `savehist-mode' and/or `desktop-save-mode'.
 `annotated-completing-read-history' is a hash table; both mechanisms
 can serialize it in Emacs 28+."
-  (add-to-list 'savehist-additional-variables 'annotated-completing-read-history)
+  (when (boundp 'savehist-additional-variables)
+    (add-to-list 'savehist-additional-variables 'annotated-completing-read-history))
   (add-to-list 'desktop-globals-to-save 'annotated-completing-read-history)
   (add-hook 'savehist-mode-hook #'annotated-completing-read--ensure-history))
 
