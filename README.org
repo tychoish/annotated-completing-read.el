@@ -79,36 +79,32 @@ Do not edit the #+RESULTS: block by hand — it will be overwritten on the next 
                    (split-string name "[ \t]+" t) " ")))
 
     (defun acr-doc--format-doc (doc)
-      (mapconcat
-       (lambda (para)
-         (cond
-          ((string-match "\\`(fn " (string-trim para))
-           (concat ": " (string-trim para)))
-          ((string-match "\\`[ \t]" para)
-           para)
-          (t
-           (mapconcat #'string-trim (split-string para "\n" t) " "))))
-       (split-string doc "\n\n" t)
-       "\n\n"))
+      (let* ((paras (split-string doc "\n\n" t))
+             (fn-para (seq-find (lambda (p) (string-match "\\`(fn " (string-trim p))) paras))
+             (rest-paras (seq-remove (lambda (p) (string-match "\\`(fn " (string-trim p))) paras)))
+        (mapconcat #'identity
+                   (delq nil
+                         (list
+                          (when fn-para (concat ": " (string-trim fn-para)))
+                          (when rest-paras
+                            (mapconcat
+                             (lambda (para)
+                               (if (string-match "\\`[ \t]" para)
+                                   para
+                                 (mapconcat #'string-trim (split-string para "\n" t) " ")))
+                             rest-paras "\n\n"))))
+                   "\n\n")))
 
     (defun acr-doc--format-sym (name)
       (let* ((sym (intern name))
              (fn-p (fboundp sym))
              (var-p (and (not fn-p) (boundp sym)))
-             (args (when fn-p
-                     (condition-case nil
-                         (help-function-arglist sym t)
-                       (error nil))))
-             (args-str (if args
-                           (format " =(%s)="
-                                   (mapconcat (lambda (a) (format "%s" a)) args " "))
-                         ""))
              (doc (or (when fn-p (documentation sym))
                       (when var-p
                         (documentation-property sym 'variable-documentation)))))
-        (format "*** %s~%s~%s\n\n%s\n\n"
+        (format "*** %s~%s~\n\n%s\n\n"
                 (if doc "" "TODO ")
-                name args-str
+                name
                 (if doc (acr-doc--format-doc doc) "*no docstring*"))))
 
     ;; Parse sections from the el file by scanning for ruler/comment patterns.
@@ -147,7 +143,9 @@ Do not edit the #+RESULTS: block by hand — it will be overwritten on the next 
 #+RESULTS:
 ** Core Interface
 
-*** ~annotated-completing-read~ =(table &rest --cl-rest--)=
+*** ~annotated-completing-read~
+
+: (fn TABLE &key (PROMPT "=> ") REQUIRE-MATCH CATEGORY HISTORY GROUP-NAME GROUP-DISPLAY INITIAL-INPUT SORT-FN DEFAULT OR-NIL)
 
 Read a candidate from TABLE with aligned per-candidate annotations. TABLE is any Emacs hash table ‘make-hash-table’ mapping candidate strings to annotation strings. Column alignment is computed automatically; callers need not pad candidates or annotations.
 
@@ -183,35 +181,29 @@ OR-NIL, when non-nil, silences C-g and empty input by returning nil instead.  Us
 
 TABLE may be a hash table, a dotted alist ((CANDIDATE . ANNOTATION) ...), or a list-form alist ((CANDIDATE ANNOTATION) ...).  ANNOTATION may be nil to suppress the annotation for that candidate.  Signals ‘user-error’ for any other type.
 
-: (fn TABLE &key (PROMPT "=> ") REQUIRE-MATCH CATEGORY HISTORY GROUP-NAME GROUP-DISPLAY INITIAL-INPUT SORT-FN DEFAULT OR-NIL)
+*** ~annotated-completing-read-context-from-point~
 
-*** ~annotated-completing-read-context-from-point~ =(&rest --cl-rest--)=
+: (fn &optional &key PROMPT SEED INITIAL-INPUT HISTORY)
 
 Select a string from context-aware candidates with PROMPT. Candidates are drawn from thing-at-point, the active region, the current line, the kill ring, and any explicit SEED strings.  SEED may be a string or a list of strings.
 
 HISTORY is a symbol passed to ‘annotated-completing-read’ to scope the per-command history; defaults to ‘this-command’, giving each calling command its own isolated history.
 
-: (fn &optional &key PROMPT SEED INITIAL-INPUT HISTORY)
-
 ** Directory Selection
 
-*** ~annotated-completing-read-directory~ =(&rest --cl-rest--)=
+*** ~annotated-completing-read-directory~
+
+: (fn &optional &key CANDIDATES PROMPT REQUIRE-MATCH)
 
 Select a directory with annotated completion. CANDIDATES is an explicit list of directory paths; if nil, a context-aware list is computed from the project root, open buffers, and ‘thing-at-point’. PROMPT defaults to "directory: ".  REQUIRE-MATCH is passed through to ‘annotated-completing-read’.
 
 With 8 or fewer candidates the annotation shows the directory’s relationship to the current directory ("parent", "project root", etc.).  With more than 8 candidates candidates are grouped by that relationship label and the annotation shows entry counts instead.
-
-: (fn &optional &key CANDIDATES PROMPT REQUIRE-MATCH)
 
 ** Session
 
 *** ~annotated-completing-read-enable-session-save~
 
 Persist ACR history across sessions via savehist and desktop. Call this once after enabling ‘savehist-mode’ or ‘desktop-save-mode’. ‘annotated-completing-read-history’ is a hash table; both mechanisms can serialize it in Emacs 28+.
-
-
-
-
 * License
 
 Copyright (C) tychoish. GPL-3.0 or later. See the source file header
