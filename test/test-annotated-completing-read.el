@@ -37,11 +37,10 @@ element (the completion table function)."
 
 ;;; Guard
 
-(ert-deftest annotated-completing-read/rejects-non-hash-table ()
-  (should-error (annotated-completing-read "string")    :type 'user-error)
-  (should-error (annotated-completing-read '(a . b))    :type 'user-error)
-  (should-error (annotated-completing-read nil)         :type 'user-error)
-  (should-error (annotated-completing-read [vec])       :type 'user-error))
+(ert-deftest annotated-completing-read/rejects-non-table-non-alist ()
+  (should-error (annotated-completing-read "string") :type 'user-error)
+  (should-error (annotated-completing-read [vec])    :type 'user-error)
+  (should-error (annotated-completing-read 42)       :type 'user-error))
 
 (ert-deftest annotated-completing-read/accepts-plain-hash-table ()
   (let ((table (make-hash-table :test #'equal)))
@@ -1084,6 +1083,105 @@ the invariant being tested is that key+padding is constant, not key+padding+valu
     (cl-letf (((symbol-function 'completing-read)
                (lambda (&rest _) (signal 'quit nil))))
       (should (equal "fallback" (annotated-completing-read table :default "fallback" :or-nil t))))))
+
+;;; --to-map unit tests
+
+(ert-deftest annotated-completing-read/to-map-hash-passthrough ()
+  "Hash tables are returned as-is (identity, no copy)."
+  (let* ((ht (acr-test--ht ("a" "1")))
+         (result (annotated-completing-read--to-map ht)))
+    (should (eq ht result))))
+
+(ert-deftest annotated-completing-read/to-map-dotted-alist ()
+  (let ((result (annotated-completing-read--to-map '(("a" . "1") ("b" . "2")))))
+    (should (hash-table-p result))
+    (should (equal "1" (map-elt result "a")))
+    (should (equal "2" (map-elt result "b")))))
+
+(ert-deftest annotated-completing-read/to-map-list-form-alist ()
+  (let ((result (annotated-completing-read--to-map '(("a" "1") ("b" "2")))))
+    (should (hash-table-p result))
+    (should (equal "1" (map-elt result "a")))
+    (should (equal "2" (map-elt result "b")))))
+
+(ert-deftest annotated-completing-read/to-map-nil-annotation ()
+  (let ((result (annotated-completing-read--to-map '(("a" . nil) ("b" . "2")))))
+    (should (hash-table-p result))
+    (should (null (map-elt result "a")))
+    (should (equal "2" (map-elt result "b")))))
+
+(ert-deftest annotated-completing-read/to-map-empty-alist ()
+  (let ((result (annotated-completing-read--to-map '())))
+    (should (hash-table-p result))
+    (should (= 0 (hash-table-count result)))))
+
+(ert-deftest annotated-completing-read/to-map-rejects-string ()
+  (should-error (annotated-completing-read--to-map "not a table") :type 'user-error))
+
+(ert-deftest annotated-completing-read/to-map-rejects-vector ()
+  (should-error (annotated-completing-read--to-map [a b c]) :type 'user-error))
+
+;;; Alist input acceptance
+
+(ert-deftest annotated-completing-read/accepts-dotted-alist ()
+  (let ((table '(("foo" . "desc-foo") ("bar" . "desc-bar"))))
+    (acr-with-mock table "foo"
+      (should (equal "foo" (annotated-completing-read table))))))
+
+(ert-deftest annotated-completing-read/accepts-list-form-alist ()
+  (let ((table '(("foo" "desc-foo") ("bar" "desc-bar"))))
+    (acr-with-mock table "foo"
+      (should (equal "foo" (annotated-completing-read table))))))
+
+(ert-deftest annotated-completing-read/accepts-empty-alist ()
+  (acr-with-mock '() ""
+    (should (equal "" (annotated-completing-read '())))))
+
+(ert-deftest annotated-completing-read/dotted-alist-annotation-content ()
+  (let ((table '(("alpha" . "first letter") ("beta" . "second letter"))))
+    (acr-with-mock table "alpha"
+      (annotated-completing-read table)
+      (let ((annotate (alist-get 'annotation-function (acr-metadata captured-collection))))
+        (should (string-match-p "first letter"  (funcall annotate "alpha")))
+        (should (string-match-p "second letter" (funcall annotate "beta")))))))
+
+(ert-deftest annotated-completing-read/list-form-alist-annotation-content ()
+  (let ((table '(("alpha" "first letter") ("beta" "second letter"))))
+    (acr-with-mock table "alpha"
+      (annotated-completing-read table)
+      (let ((annotate (alist-get 'annotation-function (acr-metadata captured-collection))))
+        (should (string-match-p "first letter"  (funcall annotate "alpha")))
+        (should (string-match-p "second letter" (funcall annotate "beta")))))))
+
+(ert-deftest annotated-completing-read/nil-annotation-entry ()
+  "A nil annotation returns nil from the annotation function."
+  (let ((table '(("foo" . nil) ("bar" . "has-ann"))))
+    (acr-with-mock table "foo"
+      (annotated-completing-read table)
+      (let ((annotate (alist-get 'annotation-function (acr-metadata captured-collection))))
+        (should (null (funcall annotate "foo")))
+        (should (string-match-p "has-ann" (funcall annotate "bar")))))))
+
+(ert-deftest annotated-completing-read/dotted-alist-collection-returns-candidates ()
+  "All alist keys are surfaced as completion candidates."
+  (let ((table '(("alpha" . "1") ("beta" . "2") ("gamma" . "3"))))
+    (acr-with-mock table "alpha"
+      (annotated-completing-read table)
+      (let ((all (funcall captured-collection "" nil t)))
+        (should (member "alpha" all))
+        (should (member "beta"  all))
+        (should (member "gamma" all))))))
+
+(ert-deftest annotated-completing-read/dotted-alist-annotation-alignment ()
+  "Column alignment holds for dotted alist input."
+  (let ((table '(("a" . "x") ("much-longer-key" . "y"))))
+    (acr-with-mock table "a"
+      (annotated-completing-read table)
+      (let* ((annotate  (alist-get 'annotation-function (acr-metadata captured-collection)))
+             (ann-short (funcall annotate "a"))
+             (ann-long  (funcall annotate "much-longer-key")))
+        (should (= (+ (length "a")               (length ann-short))
+                   (+ (length "much-longer-key") (length ann-long))))))))
 
 (provide 'test-annotated-completing-read)
 ;;; test-annotated-completing-read.el ends here

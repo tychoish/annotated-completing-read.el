@@ -58,6 +58,27 @@ the standard Emacs history lists accumulated by `completing-read'.")
 (defun annotated-completing-read--prefix-padding (key longest)
   (make-string (abs (+ 4 (- longest (length key)))) ?\s))
 
+(defun annotated-completing-read--to-map (table)
+  "Normalize TABLE to a hash table.
+TABLE may be a hash table (returned as-is), a dotted alist
+\((KEY . VALUE) ...), or a list-form alist ((KEY VALUE) ...).
+VALUE may be nil to suppress the annotation for that candidate.
+Signals `user-error' for any other type."
+  (cond
+   ((hash-table-p table) table)
+   ((proper-list-p table)
+    (let ((ht (make-hash-table :test #'equal)))
+      (dolist (pair table)
+        (unless (consp pair)
+          (user-error "Each alist entry must be a cons cell; got: %S" pair))
+        (puthash (car pair)
+                 (let ((v (cdr pair)))
+                   (if (listp v) (car v) v))
+                 ht))
+      ht))
+   (t
+    (user-error "TABLE must be a hash table or alist mapping candidates to annotations"))))
+
 ;;;###autoload
 (cl-defun annotated-completing-read
     (table &key (prompt "=> ") require-match category history group-name group-display initial-input sort-fn default or-nil)
@@ -117,17 +138,20 @@ nil instead.  Useful when the caller treats nil as \"nothing selected\" without
 needing a specific fallback string.  Takes effect only when DEFAULT is nil;
 DEFAULT takes precedence.
 
-Signals `user-error' if TABLE is not a hash table."
-  (unless (hash-table-p table)
-    (user-error "TABLE must be a hash table mapping candidates to annotations"))
+TABLE may be a hash table, a dotted alist ((CANDIDATE . ANNOTATION) ...), or
+a list-form alist ((CANDIDATE ANNOTATION) ...).  ANNOTATION may be nil to
+suppress the annotation for that candidate.  Signals `user-error' for any
+other type."
+  (let ((table (annotated-completing-read--to-map table)))
   (when (and (or default or-nil) (zerop (map-length table)))
     (cl-return-from annotated-completing-read default))
   (let* ((prompt (if (string-suffix-p " " prompt) prompt (concat prompt " ")))
          (hist-key (or history this-command 'annotated-completing-read))
          (longest (annotated-completing-read--length-of-longest (map-keys table)))
          (annotate-fn (lambda (candidate)
-                        (concat (annotated-completing-read--prefix-padding candidate longest)
-                                (map-elt table candidate))))
+                        (when-let* ((ann (map-elt table candidate)))
+                          (concat (annotated-completing-read--prefix-padding candidate longest)
+                                  ann))))
          (name-fn (cond ((functionp group-name) group-name)
                         (group-name (lambda (_candidate) group-name))))
          (display-fn (or group-display #'identity))
@@ -156,7 +180,7 @@ Signals `user-error' if TABLE is not a hash table."
         ((not (equal result "")) result)
         (default default)
         (or-nil nil)
-        (t result)))))
+        (t result))))))
 
 (defun annotated-completing-read--context-candidates (&optional seed)
   "Build an annotated hash table of candidates from the current context.
