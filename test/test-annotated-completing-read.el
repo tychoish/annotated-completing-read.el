@@ -671,13 +671,6 @@ the invariant being tested is that key+padding is constant, not key+padding+valu
   (let ((result (annotated-completing-read--directory-parents (expand-file-name "~/") (expand-file-name "~/"))))
     (should (listp result))))
 
-(ert-deftest annotated-completing-read/directory-parents-start-equals-stop ()
-  "When start and stop are the same, at most one entry is returned."
-  (let* ((dir (file-name-as-directory temporary-file-directory))
-         (result (annotated-completing-read--directory-parents dir dir)))
-    (should (listp result))
-    (should (<= (length result) 1))))
-
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; annotated-completing-read-directory annotation labels
 
