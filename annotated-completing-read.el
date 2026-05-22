@@ -38,6 +38,7 @@
 
 ;; stdlib packages
 (require 'cl-lib)
+(require 'subr-x)
 
 (require 'map)
 (require 'seq)
