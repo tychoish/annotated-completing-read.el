@@ -80,6 +80,10 @@ Signals `user-error' for any other type."
    (t
     (user-error "TABLE must be a hash table or alist mapping candidates to annotations"))))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; Core Interface
+
 ;;;###autoload
 (cl-defun annotated-completing-read
     (table &key (prompt "=> ") require-match category history group-name group-display initial-input sort-fn default or-nil)
@@ -248,7 +252,7 @@ command its own isolated history."
        :history (or history this-command 'annotated-completing-read-context-from-point))
     ""))
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;; directory selection
 
@@ -398,6 +402,10 @@ annotation shows entry counts instead."
       (annotated-completing-read relationship
 				 :prompt (or prompt "directory:")
 				 :require-match require-match))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; Session
 
 ;;;###autoload
 (defun annotated-completing-read-enable-session-save ()

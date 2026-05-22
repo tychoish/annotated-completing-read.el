@@ -1,0 +1,218 @@
+#+TITLE: annotated-completing-read.el -- completing-read with aligned annotations
+#+OPTIONS: toc:2 num:nil
+
+* Overview
+A wrapper around =completing-read= that accepts a hash table or alist of
+candidates to annotations and surfaces them as aligned completion metadata
+understood by [[https://github.com/minad/vertico][vertico]] (and other minibuffer completion interfaces), [[https://github.com/oantolin/marginalia][marginalia]],
+and [[https://github.com/oantolin/embark][embark]].
+
+Also provides =annotated-completing-read-directory= for context-aware directory
+selection and =annotated-completing-read-context-from-point= for populating
+candidates from =thing-at-point=, the active region, the current line, and the
+kill ring.
+
+* Contents                                                       :TOC:
+- [[#overview][Overview]]
+- [[#installation][Installation]]
+  - [[#use-package][Use Package]]
+  - [[#manual][Manual]]
+- [[#api-reference][API Reference]]
+  - [[#core-interface][Core Interface]]
+  - [[#directory-selection][Directory Selection]]
+  - [[#session][Session]]
+- [[#license][License]]
+
+* Installation
+** Use Package
+#+BEGIN_SRC sh
+git clone https://github.com/tychoish/annotated-completing-read.el ~/path/to/annotated-completing-read.el
+#+END_SRC
+
+#+BEGIN_SRC emacs-lisp
+(use-package annotated-completing-read
+  :load-path "~/path/to/annotated-completing-read.el")
+#+END_SRC
+
+** Manual
+
+#+BEGIN_SRC sh
+git clone https://github.com/tychoish/annotated-completing-read.el ~/path/to/annotated-completing-read.el
+#+END_SRC
+
+#+BEGIN_SRC emacs-lisp
+(add-to-list 'load-path "~/path/to/annotated-completing-read.el")
+(require 'annotated-completing-read)
+#+END_SRC
+
+* API Reference
+
+#+BEGIN_COMMENT
+Generated from docstrings in annotated-completing-read.el. To regenerate: open
+this file in Emacs with annotated-completing-read on your load-path, place
+point in the source block below, and run C-c C-c (or M-x org-babel-execute-buffer).
+Do not edit the #+RESULTS: block by hand — it will be overwritten on the next run.
+#+END_COMMENT
+
+#+BEGIN_SRC emacs-lisp :results output raw :exports none
+  (save-excursion
+    (org-back-to-heading t)
+    (let ((end (save-excursion (org-end-of-subtree t) (point))))
+      (forward-line 1)
+      (while (and (< (point) end) (not (org-at-heading-p)))
+        (forward-line 1))
+      (when (< (point) end)
+        (delete-region (point) end))))
+
+  (let* ((org-dir (file-name-directory (buffer-file-name)))
+         (el-file (car (seq-remove
+                        (lambda (f) (string-match-p "-test\\.el$\\|test-.*\\.el$" f))
+                        (directory-files org-dir t "\\.el$" t)))))
+    (add-to-list 'load-path org-dir)
+    (require (intern (file-name-base el-file)))
+
+    (defun acr-doc--section-name (comment-text)
+      (let* ((name (string-trim (car (split-string comment-text " -- "))))
+             (name (replace-regexp-in-string "-" " " name)))
+        (mapconcat (lambda (s) (if (string-match-p "\\." s) s (capitalize s)))
+                   (split-string name "[ \t]+" t) " ")))
+
+    (defun acr-doc--format-doc (doc)
+      (mapconcat
+       (lambda (para)
+         (cond
+          ((string-match "\\`(fn " (string-trim para))
+           (concat ": " (string-trim para)))
+          ((string-match "\\`[ \t]" para)
+           para)
+          (t
+           (mapconcat #'string-trim (split-string para "\n" t) " "))))
+       (split-string doc "\n\n" t)
+       "\n\n"))
+
+    (defun acr-doc--format-sym (name)
+      (let* ((sym (intern name))
+             (fn-p (fboundp sym))
+             (var-p (and (not fn-p) (boundp sym)))
+             (args (when fn-p
+                     (condition-case nil
+                         (help-function-arglist sym t)
+                       (error nil))))
+             (args-str (if args
+                           (format " =(%s)="
+                                   (mapconcat (lambda (a) (format "%s" a)) args " "))
+                         ""))
+             (doc (or (when fn-p (documentation sym))
+                      (when var-p
+                        (documentation-property sym 'variable-documentation)))))
+        (format "*** %s~%s~%s\n\n%s\n\n"
+                (if doc "" "TODO ")
+                name args-str
+                (if doc (acr-doc--format-doc doc) "*no docstring*"))))
+
+    ;; Parse sections from the el file by scanning for ruler/comment patterns.
+    ;; Sections are delimited by long ;;;;... ruler lines; the first ;; comment
+    ;; after each ruler names the section.
+    (let (sections current-section current-syms after-ruler)
+      (with-temp-buffer
+        (insert-file-contents el-file)
+        (goto-char (point-min))
+        (while (not (eobp))
+          (let ((line (buffer-substring-no-properties
+                       (line-beginning-position) (line-end-position))))
+            (cond
+             ((string-match "^;\\{10,\\}" line)
+              (when current-section
+                (push (cons current-section (nreverse current-syms)) sections))
+              (setq current-section nil current-syms nil after-ruler t))
+             ((and after-ruler
+                   (string-match "^;; \\(.+\\)" line))
+              (setq current-section (acr-doc--section-name (match-string 1 line))
+                    after-ruler nil))
+             ((and current-section
+                   (string-match "^(\\(?:cl-\\)?def[^ ]+ +'?\\([^ ()]+\\)" line)
+                   (not (string-match-p "--" (match-string 1 line))))
+              (push (match-string 1 line) current-syms))))
+          (forward-line 1))
+        (when current-section
+          (push (cons current-section (nreverse current-syms)) sections)))
+
+      (dolist (section (nreverse sections))
+        (princ (format "** %s\n\n" (car section)))
+        (dolist (name (cdr section))
+          (princ (acr-doc--format-sym name))))))
+#+END_SRC
+
+#+RESULTS:
+** Core Interface
+
+*** ~annotated-completing-read~ =(table &rest --cl-rest--)=
+
+Read a candidate from TABLE with aligned per-candidate annotations. TABLE is any Emacs hash table ‘make-hash-table’ mapping candidate strings to annotation strings. Column alignment is computed automatically; callers need not pad candidates or annotations.
+
+PROMPT is the minibuffer prompt (default "=> "); a trailing space is appended automatically if absent.
+
+REQUIRE-MATCH, when non-nil, forces the user to select an existing candidate. When nil (the default), arbitrary input not present in TABLE is accepted and returned verbatim.
+
+CATEGORY is an optional completion-category symbol surfaced as table metadata. Completion UIs (vertico, embark, marginalia) use it to select annotations, keybindings, and actions.  Common values:
+
+  ‘file’              – file-name actions, path display via marginalia
+  ‘buffer’            – buffer switching and embark buffer actions
+  ‘command’           – M-x style command dispatch
+  ‘symbol’            – Lisp symbol lookup and eldoc integration
+  ‘bookmark’          – bookmark-jump actions
+  ‘consult-grep’      – consult grep result actions (jump to line, etc.)
+  ‘consult-mu’        – consult-mu mail account entries
+
+HISTORY is a symbol key into ‘annotated-completing-read-history’ (a hash table of per-command history lists).  Defaults to ‘this-command’ captured at call time, giving each command its own isolated history automatically.  Pass an explicit symbol to share history across several call sites.
+
+GROUP-NAME is a function (CANDIDATE) => group-name-string that returns which group a candidate belongs to, or a plain string for a single constant group. When nil, no grouping metadata is emitted.
+
+GROUP-DISPLAY is an optional function (CANDIDATE) => display-string that controls how a candidate is rendered within its group.  Defaults to identity (candidate displayed verbatim).  Only meaningful when GROUP-NAME is set.
+
+Together GROUP-NAME and GROUP-DISPLAY are assembled into the ‘group-function’ completion metadata entry expected by vertico and other UIs.
+
+INITIAL-INPUT is an optional string pre-filled into the minibuffer.
+
+SORT-FN is an optional function (LIST-OF-STRINGS) => LIST-OF-STRINGS that reorders candidates before display.  Surfaced as ‘display-sort-function’ in completion metadata, so vertico and other UIs apply it before rendering.
+
+DEFAULT is a string returned when TABLE is empty (no prompt is shown), the user accepts empty input, or the user quits with C-g.  When non-nil it is also passed to ‘completing-read’ as its DEF argument so completion UIs can display it in the prompt.
+
+OR-NIL, when non-nil, silences C-g and empty input by returning nil instead.  Useful when the caller treats nil as "nothing selected" without needing a specific fallback string.  Takes effect only when DEFAULT is nil; DEFAULT takes precedence.
+
+TABLE may be a hash table, a dotted alist ((CANDIDATE . ANNOTATION) ...), or a list-form alist ((CANDIDATE ANNOTATION) ...).  ANNOTATION may be nil to suppress the annotation for that candidate.  Signals ‘user-error’ for any other type.
+
+: (fn TABLE &key (PROMPT "=> ") REQUIRE-MATCH CATEGORY HISTORY GROUP-NAME GROUP-DISPLAY INITIAL-INPUT SORT-FN DEFAULT OR-NIL)
+
+*** ~annotated-completing-read-context-from-point~ =(&rest --cl-rest--)=
+
+Select a string from context-aware candidates with PROMPT. Candidates are drawn from thing-at-point, the active region, the current line, the kill ring, and any explicit SEED strings.  SEED may be a string or a list of strings.
+
+HISTORY is a symbol passed to ‘annotated-completing-read’ to scope the per-command history; defaults to ‘this-command’, giving each calling command its own isolated history.
+
+: (fn &optional &key PROMPT SEED INITIAL-INPUT HISTORY)
+
+** Directory Selection
+
+*** ~annotated-completing-read-directory~ =(&rest --cl-rest--)=
+
+Select a directory with annotated completion. CANDIDATES is an explicit list of directory paths; if nil, a context-aware list is computed from the project root, open buffers, and ‘thing-at-point’. PROMPT defaults to "directory: ".  REQUIRE-MATCH is passed through to ‘annotated-completing-read’.
+
+With 8 or fewer candidates the annotation shows the directory’s relationship to the current directory ("parent", "project root", etc.).  With more than 8 candidates candidates are grouped by that relationship label and the annotation shows entry counts instead.
+
+: (fn &optional &key CANDIDATES PROMPT REQUIRE-MATCH)
+
+** Session
+
+*** ~annotated-completing-read-enable-session-save~
+
+Persist ACR history across sessions via savehist and desktop. Call this once after enabling ‘savehist-mode’ or ‘desktop-save-mode’. ‘annotated-completing-read-history’ is a hash table; both mechanisms can serialize it in Emacs 28+.
+
+
+
+
+
+* License
+
+Copyright (C) tychoish. GPL-3.0 or later. See the source file header
+for the full license text.
