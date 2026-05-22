@@ -108,8 +108,8 @@ keybindings, and actions.  Common values:
   `command'           – executed-extended-command dispatch
   `symbol'            – Lisp symbol lookup and eldoc integration
   `bookmark'          – `bookmark-jump' actions
-  `consult-grep'      – consult grep result actions (jump to line, etc.)
-  `consult-mu'        – consult-mu mail account entries
+  `consult-grep'      – `consult-grep' result actions (jump to line, etc.)
+  `consult-mu'        – `consult-mu' mail account entries
 
 HISTORY is a symbol key into `annotated-completing-read-history' (a hash table
 of per-command history lists).  Defaults to `this-command' captured at call
