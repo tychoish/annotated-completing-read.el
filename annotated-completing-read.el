@@ -188,49 +188,44 @@ other type."
         (t result))))))
 
 (defun annotated-completing-read--context-candidates (&optional seed)
-  "Build an annotated hash table of candidates from the current context.
+  "Build an annotated alist of candidates from the current context.
 SEED is a string or list of strings to include as explicit candidates."
-  (thread-last (append
-		;; current line
-		(when-let* ((line (thing-at-point 'line)))
-		  (list (cons line (format "line · %s" (buffer-name)))))
-		;; seeds
-		(thread-last
-		  (cond
-		   ((listp seed) seed)
-		   ((stringp seed) (list seed)))
-		  (seq-remove #'null)
-		  (mapcar (lambda (s) (cons s "seed"))))
-		;; thing-at-point
-		(thread-last
-		  (cond
-		   ((derived-mode-p 'prog-mode) '(symbol word sexp defun))
-		   ((derived-mode-p 'text-mode) '(word email url sentence)))
-		  (mapcar (lambda (tap) (cons tap (thing-at-point tap))))
-		  (seq-remove (lambda (pair) (or (null (cdr pair)) (>= (length (cdr pair)) 64))))
-		  (mapcar (lambda (tapv) (cons (cdr tapv) (format "%s at point" (car tapv))))))
-		;; active region
-		(when (use-region-p)
-		  (list (cons (buffer-substring-no-properties (region-beginning) (region-end))
-			      (format "region · %s" (buffer-name)))))
-		;; kill ring — first 10 entries with 1-based index annotations
-		(seq-take
-		 (thread-last
-		   kill-ring
-		   (seq-remove #'null)
-		   (seq-map-indexed (lambda (s i) (cons s (format "kill-ring [%d]" (1+ i))))))
-		 10))
-	       ;; normalize: each step is its own stage
-	       (seq-map (lambda (p) (cons (substring-no-properties (car p)) (cdr p))))
-	       (seq-map (lambda (p) (cons (string-trim (car p)) (cdr p))))
-	       (seq-remove (lambda (p) (string-empty-p (car p))))
-	       (seq-filter (lambda (p) (< (length (car p)) 128)))
-	       ;; convert to table by inserting the items:
-	       ;; TODO do we need to do this conversion at all? could just return the alist form (or convert using new tools after implementing plans/alist-input.md)
-	       (funcall (lambda (pairs)
-			  (let ((table (make-hash-table :test #'equal)))
-			    (mapc (lambda (pair) (map-put! table (car pair) (cdr pair))) pairs)
-			    table)))))
+  (thread-last
+    (append
+     ;; current line
+     (when-let* ((line (thing-at-point 'line)))
+       (list (cons line (format "line · %s" (buffer-name)))))
+     ;; seeds
+     (thread-last
+       (cond
+	((listp seed) seed)
+	((stringp seed) (list seed)))
+       (seq-remove #'null)
+       (mapcar (lambda (s) (cons s "seed"))))
+     ;; thing-at-point
+     (thread-last
+       (cond
+	((derived-mode-p 'prog-mode) '(symbol word sexp defun))
+	((derived-mode-p 'text-mode) '(word email url sentence)))
+       (mapcar (lambda (tap) (cons tap (thing-at-point tap))))
+       (seq-remove (lambda (pair) (or (null (cdr pair)) (>= (length (cdr pair)) 64))))
+       (mapcar (lambda (tapv) (cons (cdr tapv) (format "%s at point" (car tapv))))))
+     ;; active region
+     (when (use-region-p)
+       (list (cons (buffer-substring-no-properties (region-beginning) (region-end))
+		   (format "region · %s" (buffer-name)))))
+     ;; kill ring — first 10 entries with 1-based index annotations
+     (seq-take
+      (thread-last
+	kill-ring
+	(seq-remove #'null)
+	(seq-map-indexed (lambda (s i) (cons s (format "kill-ring [%d]" (1+ i))))))
+      10))
+    ;; normalize: each step is its own stage
+    (seq-map (lambda (p) (cons (substring-no-properties (car p)) (cdr p))))
+    (seq-map (lambda (p) (cons (string-trim (car p)) (cdr p))))
+    (seq-remove (lambda (p) (string-empty-p (car p))))
+    (seq-filter (lambda (p) (< (length (car p)) 128)))))
 
 ;;;###autoload
 (cl-defun annotated-completing-read-context-from-point (&optional &key prompt seed initial-input history)

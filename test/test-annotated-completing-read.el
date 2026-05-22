@@ -284,10 +284,10 @@ the invariant being tested is that key+padding is constant, not key+padding+valu
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; annotated-completing-read--context-candidates: return type and seeds
 
-(ert-deftest annotated-completing-read/candidates-returns-hash-table ()
+(ert-deftest annotated-completing-read/candidates-returns-alist ()
   (let ((kill-ring nil))
     (with-temp-buffer
-      (should (hash-table-p (annotated-completing-read--context-candidates))))))
+      (should (proper-list-p (annotated-completing-read--context-candidates))))))
 
 (ert-deftest annotated-completing-read/candidates-seed-string-included ()
   (let ((kill-ring nil))
