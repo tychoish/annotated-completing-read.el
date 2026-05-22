@@ -60,7 +60,7 @@ the standard Emacs history lists accumulated by `completing-read'.")
 
 ;;;###autoload
 (cl-defun annotated-completing-read
-    (table &key (prompt "=> ") require-match category history group-name group-display initial-input sort-fn)
+    (table &key (prompt "=> ") require-match category history group-name group-display initial-input sort-fn default or-nil)
   "Read a candidate from TABLE with aligned per-candidate annotations.
 TABLE is any Emacs hash table `make-hash-table' mapping candidate
 strings to annotation strings. Column alignment is computed
@@ -107,9 +107,21 @@ SORT-FN is an optional function (LIST-OF-STRINGS) => LIST-OF-STRINGS that
 reorders candidates before display.  Surfaced as `display-sort-function' in
 completion metadata, so vertico and other UIs apply it before rendering.
 
+DEFAULT is a string returned when TABLE is empty (no prompt is shown), the
+user accepts empty input, or the user quits with \\[keyboard-quit].  When
+non-nil it is also passed to `completing-read' as its DEF argument so
+completion UIs can display it in the prompt.
+
+OR-NIL, when non-nil, silences \\[keyboard-quit] and empty input by returning
+nil instead.  Useful when the caller treats nil as \"nothing selected\" without
+needing a specific fallback string.  Takes effect only when DEFAULT is nil;
+DEFAULT takes precedence.
+
 Signals `user-error' if TABLE is not a hash table."
   (unless (hash-table-p table)
     (user-error "TABLE must be a hash table mapping candidates to annotations"))
+  (when (and (or default or-nil) (zerop (map-length table)))
+    (cl-return-from annotated-completing-read default))
   (let* ((prompt (if (string-suffix-p " " prompt) prompt (concat prompt " ")))
          (hist-key (or history this-command 'annotated-completing-read))
          (longest (annotated-completing-read--length-of-longest (map-keys table)))
@@ -132,54 +144,64 @@ Signals `user-error' if TABLE is not a hash table."
                              ,@(when group-fn `((group-function . ,group-fn)))
                              ,@(when sort-fn `((display-sort-function . ,sort-fn))))
                          (complete-with-action action (map-keys table) str pred))))
-	 (hist-sym (make-symbol "history-cell")))
+         (hist-sym (make-symbol "history-cell")))
     (set hist-sym (map-elt annotated-completing-read-history hist-key))
-    (prog1
-	(completing-read prompt collection nil require-match initial-input hist-sym)
-      (map-put! annotated-completing-read-history hist-key (symbol-value hist-sym)))))
+    (let ((result (condition-case err
+                      (completing-read prompt collection nil require-match initial-input hist-sym default)
+                    (quit (cond (default default)
+                                (or-nil nil)
+                                (t (signal (car err) (cdr err))))))))
+      (map-put! annotated-completing-read-history hist-key (symbol-value hist-sym))
+      (cond
+        ((not (equal result "")) result)
+        (default default)
+        (or-nil nil)
+        (t result)))))
 
 (defun annotated-completing-read--context-candidates (&optional seed)
   "Build an annotated hash table of candidates from the current context.
 SEED is a string or list of strings to include as explicit candidates."
-  (let ((table (make-hash-table :test #'equal)))
-    (thread-last (append
-		  ;; current line
-		  (when-let* ((line (thing-at-point 'line)))
-		    (list (cons line (format "line · %s" (buffer-name)))))
-		  ;; seeds
-		  (thread-last
-		    (cond
-		     ((listp seed) seed)
-		     ((stringp seed) (list seed)))
-		    (seq-remove #'null)
-		    (mapcar (lambda (s) (cons s "seed"))))
-		  ;; thing-at-point
-		  (thread-last
-		    (cond
-		     ((derived-mode-p 'prog-mode) '(symbol word sexp defun))
-		     ((derived-mode-p 'text-mode) '(word email url sentence)))
-		    (mapcar (lambda (tap) (cons tap (thing-at-point tap))))
-		    (seq-remove (lambda (pair) (or (null (cdr pair)) (>= (length (cdr pair)) 64))))
-		    (mapcar (lambda (tapv) (cons (cdr tapv) (format "%s at point" (car tapv))))))
-		  ;; active region
-		  (when (use-region-p)
-		    (list (cons (buffer-substring-no-properties (region-beginning) (region-end))
-				(format "region · %s" (buffer-name)))))
-		  ;; kill ring — first 10 entries with 1-based index annotations
-		  (seq-take
-		   (thread-last
-		     kill-ring
-		     (seq-remove #'null)
-		     (seq-map-indexed (lambda (s i) (cons s (format "kill-ring [%d]" (1+ i))))))
-		   10))
-		 ;; normalize: each step is its own stage
-		 (seq-map (lambda (p) (cons (substring-no-properties (car p)) (cdr p))))
-		 (seq-map (lambda (p) (cons (string-trim (car p)) (cdr p))))
-		 (seq-remove (lambda (p) (string-empty-p (car p))))
-		 (seq-filter (lambda (p) (< (length (car p)) 128)))
-		 ;; insert into table
-		 (mapc (lambda (pair) (map-put! table (car pair) (cdr pair)))))
-    table))
+  (thread-last (append
+		;; current line
+		(when-let* ((line (thing-at-point 'line)))
+		  (list (cons line (format "line · %s" (buffer-name)))))
+		;; seeds
+		(thread-last
+		  (cond
+		   ((listp seed) seed)
+		   ((stringp seed) (list seed)))
+		  (seq-remove #'null)
+		  (mapcar (lambda (s) (cons s "seed"))))
+		;; thing-at-point
+		(thread-last
+		  (cond
+		   ((derived-mode-p 'prog-mode) '(symbol word sexp defun))
+		   ((derived-mode-p 'text-mode) '(word email url sentence)))
+		  (mapcar (lambda (tap) (cons tap (thing-at-point tap))))
+		  (seq-remove (lambda (pair) (or (null (cdr pair)) (>= (length (cdr pair)) 64))))
+		  (mapcar (lambda (tapv) (cons (cdr tapv) (format "%s at point" (car tapv))))))
+		;; active region
+		(when (use-region-p)
+		  (list (cons (buffer-substring-no-properties (region-beginning) (region-end))
+			      (format "region · %s" (buffer-name)))))
+		;; kill ring — first 10 entries with 1-based index annotations
+		(seq-take
+		 (thread-last
+		   kill-ring
+		   (seq-remove #'null)
+		   (seq-map-indexed (lambda (s i) (cons s (format "kill-ring [%d]" (1+ i))))))
+		 10))
+	       ;; normalize: each step is its own stage
+	       (seq-map (lambda (p) (cons (substring-no-properties (car p)) (cdr p))))
+	       (seq-map (lambda (p) (cons (string-trim (car p)) (cdr p))))
+	       (seq-remove (lambda (p) (string-empty-p (car p))))
+	       (seq-filter (lambda (p) (< (length (car p)) 128)))
+	       ;; convert to table by inserting the items:
+	       ;; TODO do we need to do this conversion at all? could just return the alist form (or convert using new tools after implementing plans/alist-input.md)
+	       (funcall (lambda (pairs)
+			  (let ((table (make-hash-table :test #'equal)))
+			    (mapc (lambda (pair) (map-put! table (car pair) (cdr pair))) pairs)
+			    table)))))
 
 ;;;###autoload
 (cl-defun annotated-completing-read-context-from-point (&optional &key prompt seed initial-input history)
@@ -191,16 +213,15 @@ or a list of strings.
 HISTORY is a symbol passed to `annotated-completing-read' to scope the
 per-command history; defaults to `this-command', giving each calling
 command its own isolated history."
-  (let* ((cmd (or history this-command 'annotated-completing-read-context-from-point))
-         (candidates (annotated-completing-read--context-candidates seed)))
-    (if (> (map-length candidates) 0)
-        (annotated-completing-read
-         candidates
-         :require-match nil
-         :prompt (or prompt "context: ")
-	 :initial-input initial-input
-         :history cmd)
-      "")))
+  (if-let* ((candidates (annotated-completing-read--context-candidates seed))
+	    (_ (> (map-length candidates) 0)))
+      (annotated-completing-read
+       candidates
+       :require-match nil
+       :prompt (or prompt "context:")
+       :initial-input initial-input
+       :history (or history this-command 'annotated-completing-read-context-from-point))
+    ""))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -300,12 +321,12 @@ command its own isolated history."
 
 (defun annotated-completing-read--directory-entry-counts (dir)
   "Return a brief annotation with subdirectory and file counts for DIR."
-  (if (file-accessible-directory-p dir)
-      (let* ((entries (directory-files dir t "\\`[^.]"))
-             (n-dirs (cl-count-if #'file-directory-p entries))
-             (n-files (- (length entries) n-dirs)))
-	(format "%d dirs, %d files" n-dirs n-files))
-    ""))
+  (or (when (file-accessible-directory-p dir)
+	(let* ((entries (directory-files dir t "\\`[^.]"))
+               (n-dirs (cl-count-if #'file-directory-p entries))
+               (n-files (- (length entries) n-dirs)))
+          (format "%d dirs, %d files" n-dirs n-files)))
+      ""))
 
 ;;;###autoload
 (cl-defun annotated-completing-read-directory (&optional &key candidates prompt require-match)
@@ -319,33 +340,39 @@ With 8 or fewer candidates the annotation shows the directory's relationship
 to the current directory (\"parent\", \"project root\", etc.).  With more
 than 8 candidates candidates are grouped by that relationship label and the
 annotation shows entry counts instead."
-  (let* ((dirs (or (annotated-completing-read--directory-clean candidates)
-                   (annotated-completing-read--directory-default-candidates)))
-	 (project-root (annotated-completing-read--project-root))
-         (relationship (make-hash-table :test #'equal)))
+  (let ((dirs (or (annotated-completing-read--directory-clean candidates)
+                  (annotated-completing-read--directory-default-candidates)))
+	(project-root (annotated-completing-read--project-root))
+        (relationship (make-hash-table :test #'equal)))
+
     (dolist (it (mapcar #'file-truename dirs))
       (map-put! relationship it
-              (cond
-	       ((and (equal it project-root) (equal it default-directory)) "current directory (project root)")
-	       ((equal it project-root) "project root")
-	       ((equal it default-directory) "current directory")
-	       ((string-prefix-p it default-directory) "parent")
-               ((string-prefix-p default-directory it) "child")
-               ((equal (file-name-directory (directory-file-name it))
-                       (file-name-directory (directory-file-name default-directory))) "sibling")
-               (t ""))))
-    (if (> (map-length relationship) 8)
-        (let ((counts (make-hash-table :test #'equal)))
-          (dolist (it dirs) (map-put! counts it (annotated-completing-read--directory-entry-counts it)))
-          (annotated-completing-read counts
-           :prompt (or prompt "directory: ")
-           :require-match require-match
-           :group-name (lambda (c)
-                         (let ((r (map-elt relationship c "")))
-                           (if (string-empty-p r) "other" r)))))
+		(cond
+		 ((and (equal it project-root) (equal it default-directory)) "current directory (project root)")
+		 ((equal it project-root) "project root")
+		 ((equal it default-directory) "current directory")
+		 ((string-prefix-p it default-directory) "parent")
+		 ((string-prefix-p default-directory it) "child")
+		 ((equal (file-name-directory (directory-file-name it))
+			 (file-name-directory (directory-file-name default-directory))) "sibling")
+		 (t ""))))
+
+    (if-let* (((> (map-length relationship) 8))
+              (counts (let ((tbl (make-hash-table :test #'equal)))
+                        (dolist (it dirs tbl)
+                          (map-put! tbl it (annotated-completing-read--directory-entry-counts it))))))
+	;; then
+        (annotated-completing-read counts
+				   :prompt (or prompt "directory:")
+				   :require-match require-match
+				   :group-name (lambda (c)
+						 (if-let* ((r (map-elt relationship c nil))
+							   ((not (string-empty-p r))))
+						     r "other")))
+      ;; else
       (annotated-completing-read relationship
-       :prompt (or prompt "directory: ")
-       :require-match require-match))))
+				 :prompt (or prompt "directory:")
+				 :require-match require-match))))
 
 ;;;###autoload
 (defun annotated-completing-read-enable-session-save ()

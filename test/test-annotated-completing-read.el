@@ -1000,5 +1000,90 @@ the invariant being tested is that key+padding is constant, not key+padding+valu
           (should (member 'annotated-completing-read-history desktop-globals-to-save)))
       (setq desktop-globals-to-save orig))))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; annotated-completing-read — :default keyword
+
+(ert-deftest annotated-completing-read/default-returned-for-empty-table ()
+  "Returns :default immediately when table is empty, without calling completing-read."
+  (let ((table (make-hash-table :test #'equal))
+        called)
+    (cl-letf (((symbol-function 'completing-read)
+               (lambda (&rest _) (setq called t) "")))
+      (should (equal "fallback" (annotated-completing-read table :default "fallback")))
+      (should-not called))))
+
+(ert-deftest annotated-completing-read/default-returned-on-empty-input ()
+  "Returns :default when completing-read returns empty string."
+  (let ((table (acr-test--ht ("a" "ann"))))
+    (cl-letf (((symbol-function 'completing-read)
+               (lambda (&rest _) "")))
+      (should (equal "fallback" (annotated-completing-read table :default "fallback"))))))
+
+(ert-deftest annotated-completing-read/default-returned-on-quit ()
+  "Returns :default when the user quits with C-g."
+  (let ((table (acr-test--ht ("a" "ann"))))
+    (cl-letf (((symbol-function 'completing-read)
+               (lambda (&rest _) (signal 'quit nil))))
+      (should (equal "fallback" (annotated-completing-read table :default "fallback"))))))
+
+(ert-deftest annotated-completing-read/default-passed-to-completing-read ()
+  "The :default value is forwarded as completing-read's DEF argument."
+  (let ((table (acr-test--ht ("a" "ann")))
+        received-def)
+    (cl-letf (((symbol-function 'completing-read)
+               (lambda (_prompt _coll _pred _req _init _hist def &rest _)
+                 (setq received-def def)
+                 "a")))
+      (annotated-completing-read table :default "fallback")
+      (should (equal "fallback" received-def)))))
+
+(ert-deftest annotated-completing-read/default-nil-propagates-quit ()
+  "When :default is nil (the default), C-g propagates as a quit signal."
+  (let ((table (acr-test--ht ("a" "ann")))
+        quit-caught)
+    (cl-letf (((symbol-function 'completing-read)
+               (lambda (&rest _) (signal 'quit nil))))
+      (condition-case nil
+          (annotated-completing-read table)
+        (quit (setq quit-caught t))))
+    (should quit-caught)))
+
+(ert-deftest annotated-completing-read/default-not-returned-on-selection ()
+  "Normal selection is returned unchanged even when :default is set."
+  (let ((table (acr-test--ht ("a" "ann"))))
+    (cl-letf (((symbol-function 'completing-read)
+               (lambda (&rest _) "a")))
+      (should (equal "a" (annotated-completing-read table :default "fallback"))))))
+
+(ert-deftest annotated-completing-read/or-nil-returns-nil-on-quit ()
+  "With :or-nil t, quitting returns nil instead of propagating."
+  (let ((table (acr-test--ht ("a" "ann"))))
+    (cl-letf (((symbol-function 'completing-read)
+               (lambda (&rest _) (signal 'quit nil))))
+      (should-not (annotated-completing-read table :or-nil t)))))
+
+(ert-deftest annotated-completing-read/or-nil-returns-nil-on-empty-input ()
+  "With :or-nil t, empty input returns nil."
+  (let ((table (acr-test--ht ("a" "ann"))))
+    (cl-letf (((symbol-function 'completing-read)
+               (lambda (&rest _) "")))
+      (should-not (annotated-completing-read table :or-nil t)))))
+
+(ert-deftest annotated-completing-read/or-nil-empty-table-returns-nil ()
+  "With :or-nil t, an empty table returns nil without prompting."
+  (let ((table (make-hash-table :test #'equal))
+        called)
+    (cl-letf (((symbol-function 'completing-read)
+               (lambda (&rest _) (setq called t) "")))
+      (should-not (annotated-completing-read table :or-nil t))
+      (should-not called))))
+
+(ert-deftest annotated-completing-read/default-takes-precedence-over-or-nil ()
+  "When both :default and :or-nil are set, :default value is returned."
+  (let ((table (acr-test--ht ("a" "ann"))))
+    (cl-letf (((symbol-function 'completing-read)
+               (lambda (&rest _) (signal 'quit nil))))
+      (should (equal "fallback" (annotated-completing-read table :default "fallback" :or-nil t))))))
+
 (provide 'test-annotated-completing-read)
 ;;; test-annotated-completing-read.el ends here
