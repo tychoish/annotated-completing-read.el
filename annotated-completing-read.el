@@ -89,7 +89,7 @@ Signals `user-error' for any other type."
     (table &key (prompt "=> ") require-match category history group-name group-display initial-input sort-fn default or-nil)
   "Read a candidate from TABLE with aligned per-candidate annotations.
 TABLE is any Emacs hash table `make-hash-table' mapping candidate
-strings to annotation strings. Column alignment is computed
+strings to annotation strings.  Column alignment is computed
 automatically; callers need not pad candidates or annotations.
 
 PROMPT is the minibuffer prompt (default \"=> \"); a trailing space is appended
@@ -105,9 +105,9 @@ keybindings, and actions.  Common values:
 
   `file'              – file-name actions, path display via marginalia
   `buffer'            – buffer switching and embark buffer actions
-  `command'           – M-x style command dispatch
+  `command'           – executed-extended-command dispatch
   `symbol'            – Lisp symbol lookup and eldoc integration
-  `bookmark'          – bookmark-jump actions
+  `bookmark'          – `bookmark-jump' actions
   `consult-grep'      – consult grep result actions (jump to line, etc.)
   `consult-mu'        – consult-mu mail account entries
 
@@ -122,7 +122,7 @@ When nil, no grouping metadata is emitted.
 
 GROUP-DISPLAY is an optional function (CANDIDATE) => display-string that
 controls how a candidate is rendered within its group.  Defaults to identity
-(candidate displayed verbatim).  Only meaningful when GROUP-NAME is set.
+where candidate are displayed verbatim.  Only meaningful when GROUP-NAME is set.
 
 Together GROUP-NAME and GROUP-DISPLAY are assembled into the `group-function'
 completion metadata entry expected by vertico and other UIs.
@@ -235,22 +235,23 @@ SEED is a string or list of strings to include as explicit candidates."
 ;;;###autoload
 (cl-defun annotated-completing-read-context-from-point (&optional &key prompt seed initial-input history)
   "Select a string from context-aware candidates with PROMPT.
-Candidates are drawn from thing-at-point, the active region, the current
-line, the kill ring, and any explicit SEED strings.  SEED may be a string
-or a list of strings.
+Candidates are drawn from `thing-at-point', the active region, the current
+line, the kill ring, and any explicit SEED strings.  SEED may be a
+string or a list of strings.  Callers can specify INITIAL-INPUT to
+control an initial selection.
 
 HISTORY is a symbol passed to `annotated-completing-read' to scope the
 per-command history; defaults to `this-command', giving each calling
-command its own isolated history."
-  (if-let* ((candidates (annotated-completing-read--context-candidates seed))
-	    (_ (> (map-length candidates) 0)))
-      (annotated-completing-read
-       candidates
-       :require-match nil
-       :prompt (or prompt "context:")
-       :initial-input initial-input
-       :history (or history this-command 'annotated-completing-read-context-from-point))
-    ""))
+command its own isolated history.
+
+Returns the emptry string if there are no options or no selections."
+  (annotated-completing-read
+   (annotated-completing-read--context-candidates seed)
+   :require-match nil
+   :prompt (or prompt "context:")
+   :initial-input initial-input
+   :default ""
+   :history (or history this-command 'annotated-completing-read-context-from-point)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -409,7 +410,8 @@ annotation shows entry counts instead."
 
 ;;;###autoload
 (defun annotated-completing-read-enable-session-save ()
-  "Persist ACR history across sessions via savehist and desktop and add to savehist's hook.
+  "Persist ACR history across sessions via savehist and desktop.
+Registers `annotated-completing-read''s history with savehist mode's hook.
 Call this once after enabling `savehist-mode' and/or `desktop-save-mode'.
 `annotated-completing-read-history' is a hash table; both mechanisms
 can serialize it in Emacs 28+."
