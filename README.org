@@ -1,17 +1,18 @@
-#+TITLE: annotated-completing-read.el -- completing-read with aligned annotations
+#+TITLE: annotated-completing-read.el -- ergonomic completing-read with annotations
 #+OPTIONS: toc:2 num:nil
 
 * Overview
-A wrapper around =completing-read= that accepts a hash table or alist of
-candidates to annotations and surfaces them as aligned completion metadata
-understood by [[https://github.com/minad/vertico][vertico]] (and other minibuffer completion interfaces), [[https://github.com/oantolin/marginalia][marginalia]],
-and [[https://github.com/oantolin/embark][embark]].
+Fundamentally, this is a thin wrapper around the standard emacs
+=completing-read= facility, with a more ergonomic (lisp) interface. It shares a
+lot with =consult--read=, but it's very lightweight, and works well with [[https://github.com/minad/vertico][vertico]]
+(and other minibuffer completion interfaces), [[https://github.com/oantolin/marginalia][marginalia]], and [[https://github.com/oantolin/embark][embark]] (and
+related tooling).
 
-Also provides =annotated-completing-read-directory= for context-aware directory
-selection and =annotated-completing-read-context-from-point= for populating
-candidates from =thing-at-point=, the active region, the current line, and the
-kill ring.
-
+The =annotated-completing-read= function has intuitive, easy to read semantics:
+keyword arguments for all optional arguments, selection options are a mapping
+(hashmap or alist) of options-to-annotations. There are some (bonsu) helpers for
+selecting a directory from a list of likely options and selecting input from a
+list of thing-at-point, kill-ring (and other likely) possibilities.
 * Contents                                                       :TOC:
 - [[#overview][Overview]]
 - [[#installation][Installation]]
@@ -207,7 +208,6 @@ With 8 or fewer candidates the annotation shows the directory’s relationship t
 *** ~annotated-completing-read-enable-session-save~
 
 Persist ACR history across sessions via savehist and desktop. Call this once after enabling ‘savehist-mode’ or ‘desktop-save-mode’. ‘annotated-completing-read-history’ is a hash table; both mechanisms can serialize it in Emacs 28+.
-
 
 
 
