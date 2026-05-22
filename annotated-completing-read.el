@@ -1,6 +1,7 @@
 ;;; annotated-completing-read.el --- Completing-read with aligned annotations -*- lexical-binding: t -*-
 
 ;; Author: sam kleinman
+;; Assisted-by: Claude:Sonnet-4.6
 ;; Maintainer: tychoish
 ;; Version: 0.1
 ;; Package-Requires: ((emacs "29.1"))
