@@ -16,6 +16,8 @@ list of thing-at-point, kill-ring (and other likely) possibilities.
 * Contents                                                       :TOC:
 - [[#overview][Overview]]
 - [[#installation][Installation]]
+  - [[#package-vcel][package-vc.el]]
+  - [[#use-package-with-vc][use-package with VC]]
   - [[#use-package][Use Package]]
   - [[#manual][Manual]]
 - [[#api-reference][API Reference]]
@@ -25,6 +27,24 @@ list of thing-at-point, kill-ring (and other likely) possibilities.
 - [[#license][License]]
 
 * Installation
+** package-vc.el
+
+Requires Emacs 29.1+.  Run once to clone and register the package:
+
+#+BEGIN_SRC emacs-lisp
+(package-vc-install '(annotated-completing-read
+                      :url "https://github.com/tychoish/annotated-completing-read.el"))
+#+END_SRC
+
+** use-package with VC
+
+Requires Emacs 30+.  Installs on first load if not already present:
+
+#+BEGIN_SRC emacs-lisp
+(use-package annotated-completing-read
+  :vc (:url "https://github.com/tychoish/annotated-completing-read.el"))
+#+END_SRC
+
 ** Use Package
 #+BEGIN_SRC sh
 git clone https://github.com/tychoish/annotated-completing-read.el ~/path/to/annotated-completing-read.el
