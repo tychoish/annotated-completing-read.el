@@ -2,3 +2,4 @@
 /.cache/
 *.elc
 *-autoloads.el
+annotated-completing-read-pkg.el
